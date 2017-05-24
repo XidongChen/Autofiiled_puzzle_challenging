@@ -1,0 +1,749 @@
+;; The first three lines of this file were inserted by DrRacket. They record metadata
+;; about the language level of this file in a form that our tools can easily process.
+#reader(lib "htdp-intermediate-lambda-reader.ss" "lang")((modname |#polyominoes|) (read-case-sensitive #t) (teachpacks ()) (htdp-settings #(#t constructor repeating-decimal #f #t none #f () #f)))
+;;
+;;******************************
+;;   CS 135 Fall 2016
+;;   Xidong Chen (20683737)
+;;   Assigment 10 Problem 01
+;;******************************
+;;
+
+(require "a10.rkt")
+
+;; Uncomment the following line if you want to use
+;; the examples in kanoodle.rkt
+;; (require "kanoodle.rkt")
+
+;; A Grid is a (listof (listof Char))
+;; requires: both inner and outer lists of Grid are non-empty
+
+(define-struct pos (x y))
+;; A Pos is a (make-pos Nat Nat)
+
+(define-struct state (puzzle pieces))
+;; A State is a (make-state Grid (listof Grid))
+
+
+
+;; (solve-puzzle grid polys viz-style)
+;; Solve a polyomino puzzle, given the initially empty (or partially filled 
+;; in) grid, a set of pieces that must be placed, and a Symbol indicating
+;; what visualization style to use.  Legal viz styles are 'interactive
+;; (draw every step of the search), 'at-end (just draw the solution, if one
+;; is found), or 'offline (don't draw anything).  Produce either the solved
+;; Grid (converted to a list of Strings, just for convenience) or false if
+;; no solution exists.
+;;
+;; You don't need to modify this function at all.  It is provided for you
+;; so that you can test your puzzle solving algorithm interactively.  If
+;; you decide you want to write check-expect tests using solve-puzzle
+;; (which you don't have to do, but can if you want), be sure to consume
+;; 'offline for viz-style.
+
+;; solve-puzzle: Grid (listof Grid) Sym -> (anyof (listof Str) false)
+;; requires: viz-style is one of {'interactive, 'at-end or 'offline}
+
+;; Some Examples are included below after the solve-puzzle function definition.
+
+;; DO NOT MODIFY THIS CODE
+(define (solve-puzzle grid polys viz-style)
+  (local
+    [(define result
+       (search 
+        (lambda (S) (empty? (state-pieces S)))
+        neighbours
+        (cond
+          [(symbol=? viz-style 'interactive)
+           (lambda (S) (draw-grid (state-puzzle S)))]
+          [else false])
+        (make-state grid polys)))
+     
+     (define maybe-last-draw
+       (cond
+         [(and (state? result)
+               (symbol=? viz-style 'at-end))
+          (draw-grid (state-puzzle result))]
+         [else false]))]
+    (cond
+      [(boolean? result) result]
+      [else (map list->string (state-puzzle result))])))
+
+;; Examples:
+;; (The examples are not provided in check-expect form.  They're meant to
+;; demonstrate typical uses of the function, but we don't want to them to
+;; open interactive visualizations every time you start the program.)
+
+;; Solve offline (i.e. work like a normal Scheme function).
+;(solve-puzzle
+;  (strlist->grid '("...." "...." "...." "...." "...." "...."))
+;  (cons '((#\L #\L) (#\. #\L)) (cons '((#\O)) tetrominoes-uc))
+;  'offline)
+
+;; Display the result graphically, if a solution is found.
+;(solve-puzzle
+;  (strlist->grid '("...." "...." "...." "...." "...." "...."))
+;  (cons '((#\L #\L) (#\. #\L)) (cons '((#\O)) tetrominoes-uc))
+;  'at-end)
+
+;; Display every step of the search as it progresses.
+;(solve-puzzle
+;  (strlist->grid '("...." "...." "...." "...." "...." "...."))
+;  (cons '((#\L #\L) (#\. #\L)) (cons '((#\O)) tetrominoes-uc))
+;  'interactive)
+
+
+;; global helper functions
+
+
+;; (fing-nth-element count lst) produce the element at count position of the lst
+;;  if the element exists otherwise produce empty
+;; find-nth-element: Nat (Listof Any) -> (Anyof Any Empty)
+;; examples:
+
+(check-expect (find-nth-element 0 empty) empty)
+(check-expect (find-nth-element 2 (list 1 2 3)) 3)
+
+(define (find-nth-element count lst)
+  (cond [(empty? lst) empty]
+        [(= count 0) (first lst)]
+        [else (find-nth-element (sub1 count) (rest lst))]))
+
+;;tests:
+(check-expect (find-nth-element 1 empty) empty)
+(check-expect (find-nth-element 0 (list 1 2 3)) 1)
+(check-expect (find-nth-element 2 (list 1 2 3)) 3)
+
+
+;;(locate my-grid my-pos) produces the element at my-pos in my-grid
+;; if the element exists
+;; locate: Grid Pos ->  (Anyof Any Empty)
+;; examples:
+(check-expect (locate empty (make-pos 1 1)) empty)
+(check-expect (locate (list (list 1 1)) (make-pos 0 0)) 1) 
+
+(define (locate my-grid my-pos)
+  (find-nth-element (pos-x my-pos)
+                    (find-nth-element (pos-y my-pos) my-grid)))
+
+;; tests:
+
+(check-expect (locate empty (make-pos 1 2)) empty)
+(check-expect (locate (list (list 1 2 3)
+                            (list 4 5 6)) (make-pos 3 0)) empty)
+(check-expect (locate (list (list 1 2 3)
+                            (list 4 5 6)) (make-pos 0 3)) empty)
+(check-expect (locate (list (list 1 2 3)
+                            (list 4 5 6)) (make-pos 1 0)) 2)
+(check-expect (locate (list (list 1 2 3)
+                            (list 4 5 6)) (make-pos 0 1)) 4)
+(check-expect (locate (list (list 1 2 3)
+                            (list 4 5 6)) (make-pos 1 1)) 5)
+
+
+;; (replace-nth-element count new-item lst) replaces the element at count position
+;;  of the lst by new-item if the element exist
+;; replace-nth-element: Nat Any (Listof Any) -> (Listof Any)
+;; examples:
+(check-expect (replace-nth-element 1 "a" empty) empty)
+(check-expect (replace-nth-element 1 'a (list 'a 'b)) (list 'a 'a))
+
+(define (replace-nth-element count new-item lst)
+  (cond [(empty? lst) empty]
+        [(= count 0) (cons new-item (rest lst))]
+        [else
+         (cons (first lst)
+               (replace-nth-element (sub1 count)
+                                    new-item (rest lst)))]))
+;;tests:
+(check-expect (replace-nth-element 1 'a empty) empty)
+(check-expect (replace-nth-element 0 'a (list 1 1)) (list 'a 1))
+(check-expect (replace-nth-element 1 'a (list 1 1)) (list 1 'a))
+(check-expect (replace-nth-element 2 'a (list 1 1)) (list 1 1))
+
+
+;; (replace my-grid my-pos new-item) replaces the element at the position of count
+;;  of my-grid with new-item
+;; replace: Grid Pos Any -> Grid
+;; examples:
+(check-expect (replace empty (make-pos 1 0) 'a) empty)
+(check-expect (replace (list (list 1 1)) (make-pos 1 0) 'a)
+              (list (list 1 'a)))
+
+(define (replace my-grid my-pos new-item)
+  (replace-nth-element (pos-y my-pos)
+                       (replace-nth-element
+                        (pos-x my-pos) new-item
+                        (find-nth-element (pos-y my-pos) my-grid))
+                       my-grid))
+
+;;tests:
+(check-expect (replace empty (make-pos 1 1) 'a) empty)                     
+(check-expect (replace (list (list 1 2 3)
+                             (list 4 5 6)) (make-pos 0 0) 'a)
+              (list (list 'a 2 3)
+                    (list 4 5 6)))
+(check-expect (replace (list (list 1 2 3)
+                             (list 4 5 6)) (make-pos 0 1) 'a)
+              (list (list 1 2 3)
+                    (list 'a 5 6)))
+(check-expect (replace (list (list 1 2 3)
+                             (list 4 5 6)) (make-pos 1 0) 'a)
+              (list (list 1 'a 3)
+                    (list 4 5 6)))
+(check-expect (replace (list (list 1 2 3)
+                             (list 4 5 6)) (make-pos 3 0) 'a)
+              (list (list 1 2 3)
+                    (list 4 5 6)))
+(check-expect (replace (list (list 1 2 3)
+                             (list 4 5 6)) (make-pos 0 3) 'a)
+              (list (list 1 2 3)
+                    (list 4 5 6)))
+
+
+;; (remove-nth-element count lst) removes the element at the position
+;; of the lst if the element exists
+;; remove-nth-element: Nat (listof Any) -> (listof Any)
+;;examples:
+(check-expect (remove-nth-element 1 empty) empty)
+(check-expect (remove-nth-element 1 (list 1 2 3)) (list 1 3))
+
+(define (remove-nth-element count lst)
+  (cond [(empty? lst) empty]
+        [(= count 0) (rest lst)]
+        [else (cons (first lst)
+                    (remove-nth-element (- count 1) (rest lst)))]))
+
+;;tests:
+(check-expect (remove-nth-element 2 empty) empty)
+(check-expect (remove-nth-element 2 (list 1 2)) (list 1 2))
+(check-expect (remove-nth-element 0 (list 1 2 3)) (list 2 3))
+(check-expect (remove-nth-element 1 (list 1 2 3)) (list 1 3))
+(check-expect (remove-nth-element 2 (list 1 2 3)) (list 1 2))
+
+
+;;(a)
+
+;; (build-2dlist width height fn) produces a grid of width wide and height high
+;;  starting from origin and apply fn to each element of the grid
+;; build-2dlist: Nat Nat (Nat Nat -> Any) -> (listof (listof  Any))
+;; examples:
+(check-expect (build-2dlist 0 0 +) empty)
+(check-expect (build-2dlist 1 2 *) (list (list 0) (list 0)))
+
+(define (build-2dlist width height fn)
+  (build-list height
+              (lambda (y)
+                (build-list width
+                            (lambda (x)
+                              (fn x y))))))
+
+;;tests:
+(check-expect (build-2dlist 0 0 -) empty)
+(check-expect (build-2dlist 2 1 =)
+              (list (list true false)))
+(check-expect (build-2dlist 2 3 *)
+              (list (list  0 0)
+                    (list  0 1)
+                    (list  0 2)))
+(check-expect (build-2dlist 5 6 +)
+              (list (list 0 1 2 3 4)
+                    (list 1 2 3 4 5)
+                    (list 2 3 4 5 6)
+                    (list 3 4 5 6 7)
+                    (list 4 5 6 7 8)
+                    (list 5 6 7 8 9)))
+
+
+;;(b)
+
+;;(all-positions w h) produces all the posibile positions in a grid with
+;; width of w and height of h
+;; all-positions: Nat Nat -> (listof Posn)
+;; Examples:
+
+(check-expect (lists-equiv? (all-positions 0 0) empty) true)
+(check-expect (lists-equiv? (all-positions 1 1) (list (make-pos 0 0))) true)
+
+
+
+(define (all-positions w h)
+  (foldr append empty (build-2dlist w h make-pos)))
+
+;;Tests:
+(check-expect (lists-equiv? (all-positions 0 0) empty) true)
+(check-expect (lists-equiv? (all-positions 1 1)
+                            (list (make-pos 0 0))) true)
+(check-expect (lists-equiv? (all-positions 2 2)
+                            (list (make-pos 0 0) (make-pos 1 0)
+                                  (make-pos 0 1) (make-pos 1 1))) true)
+(check-expect (lists-equiv? (all-positions 3 4)
+                            (list (make-pos 0 0) (make-pos 1 0)
+                                  (make-pos 2 0) (make-pos 0 1)
+                                  (make-pos 1 1) (make-pos 2 1) 
+                                  (make-pos 0 2) (make-pos 1 2)
+                                  (make-pos 2 2) (make-pos 0 3)
+                                  (make-pos 1 3) (make-pos 2 3))) true)
+
+
+;;(2)
+
+;; (all-orientations my-grid) produces all distinct rotations and reflections of
+;; my-grid that are identical.
+;; all-orientaions: Grid -> (Listof Grid)
+;; Examples:
+
+(check-expect (lists-equiv? (all-orientations empty) (list empty)) true)
+(check-expect (lists-equiv? (all-orientations (list (list #\a)))
+                            (list (list (list #\a)))) true)
+
+(define (all-orientations my-grid)
+  (local [;;(reflect-left/right my-grid) reverse my-grid horizontally
+          ;;reflect-left/right: Grid -> Grid
+          (define (reflect-left/right my-grid)
+            (foldr (lambda (x y) (cons (reverse x) y)) empty my-grid))
+          ;;(reflect-up/down my-grid) reverse my-grid vertically
+          ;;reflect-up/down: Grid -> Grid
+          (define (reflect-up/down my-grid)
+            (reverse my-grid))
+          ;;(rotate my-grid) shifts my-grid of 90 degrees to the left
+          ;;rotate: Grid -> Grid
+          (define (rotate my-grid)
+            (cond [(empty? my-grid) empty]
+                  [(empty? (first my-grid)) empty]
+                  [else (local [(define first-column (map first my-grid))
+                                (define rest-column (map rest my-grid))]
+                          (cons first-column
+                                (rotate rest-column)))]))
+          (define all-solutions
+            (list my-grid
+                  (reflect-left/right my-grid)
+                  (reflect-up/down my-grid)
+                  (reflect-left/right (reflect-up/down my-grid))
+                  (rotate my-grid)
+                  (reflect-left/right (rotate my-grid))
+                  (reflect-up/down (rotate my-grid))
+                  (reflect-left/right (reflect-up/down (rotate my-grid)))))]
+    (foldr (lambda (x y) (cond [(member? x y) y]
+                               [else (cons x y)])) empty all-solutions))) 
+
+;;Tests:
+(check-expect (lists-equiv? (all-orientations empty)
+                            (list empty)) true)
+(check-expect (lists-equiv? (all-orientations (list (list #\. #\a #\.)
+                                                    (list #\a #\a #\a)
+                                                    (list #\. #\a #\.)))
+                            (list (list (list #\. #\a #\.)
+                                        (list #\a #\a #\a)
+                                        (list #\. #\a #\.))))
+              true)
+(check-expect (lists-equiv? (all-orientations (list (list #\a #\a)))
+                            (list
+                             (list (list #\a #\a))
+                             (list (list #\a)
+                                   (list #\a))))
+              true)
+(check-expect (lists-equiv? (all-orientations (list (list #\a #\a #\a)
+                                                    (list #\a #\a #\a)))
+                            (list
+                             (list (list #\a #\a #\a)
+                                   (list #\a #\a #\a))
+                             (list (list #\a #\a)
+                                   (list #\a #\a)
+                                   (list #\a #\a))))
+              true)
+(check-expect (lists-equiv? (all-orientations (list (list #\a #\a #\a)
+                                                    (list #\. #\a #\.)
+                                                    (list #\. #\a #\.)))
+                            (list
+                             (list (list #\a #\a #\a)
+                                   (list #\. #\a #\.)
+                                   (list #\. #\a #\.))
+                             (list (list #\a #\. #\.)
+                                   (list #\a #\a #\a)
+                                   (list #\a #\. #\.))
+                             (list (list #\. #\a #\.)
+                                   (list #\. #\a #\.)
+                                   (list #\a #\a #\a))
+                             (list (list #\. #\. #\a)
+                                   (list #\a #\a #\a)
+                                   (list #\. #\. #\a))))
+              true)
+(check-expect (lists-equiv? (all-orientations (list (list #\a #\a)
+                                                    (list #\a #\a)
+                                                    (list #\a #\.)))
+                            (list
+                             (list (list #\a #\a)
+                                   (list #\a #\a)
+                                   (list #\a #\.))
+                             (list (list #\. #\a)
+                                   (list #\a #\a)
+                                   (list #\a #\a))
+                             (list (list #\a #\.)
+                                   (list #\a #\a)
+                                   (list #\a #\a))
+                             (list (list #\a #\a)
+                                   (list #\a #\a)
+                                   (list #\. #\a))
+                             (list (list #\. #\a #\a)
+                                   (list #\a #\a #\a))
+                             (list (list #\a #\a #\a)
+                                   (list #\. #\a #\a))
+                             (list (list #\a #\a #\.)
+                                   (list #\a #\a #\a))
+                             (list (list #\a #\a #\a)
+                                   (list #\a #\a #\.))))
+              true)
+
+
+
+
+
+
+;;(3)
+
+;; (first-empty-pos my-grid) produces the first pos of #\. character
+;; in my-grid otherwise produces false
+;;first-empty-pos: Grid
+;; Examples:
+(check-expect (first-empty-pos empty) false)
+(check-expect (first-empty-pos (list (list #\. #\a))) (make-pos 0 0))
+
+(define (first-empty-pos my-grid)
+  (cond [(empty? my-grid) false]
+        [else
+         (local
+           [(define width (length (first my-grid)))
+            (define height (length my-grid))
+            (define flattened-grid
+              (foldr append empty my-grid))
+            (define assigned-grid
+              (map list flattened-grid (all-positions width height)))
+            (define results
+              (filter (lambda (x) (member? #\. x)) assigned-grid))]
+           (cond [(empty? results) false]
+                 [else (second (first results))]))]))
+
+;;Tests:
+(check-expect (first-empty-pos empty) false)
+(check-expect (first-empty-pos (list (list #\a #\a #\a)
+                                     (list #\a #\a #\a))) false)
+(check-expect (first-empty-pos (list (list #\. #\a #\a)
+                                     (list #\a #\a #\a))) (make-pos 0 0))
+(check-expect (first-empty-pos (list (list #\a #\a #\a)
+                                     (list #\. #\a #\a))) (make-pos 0 1))
+(check-expect (first-empty-pos (list (list #\a #\a #\.)
+                                     (list #\a #\a #\a))) (make-pos 2 0))
+(check-expect (first-empty-pos (list (list #\a #\a #\a)
+                                     (list #\a #\a #\a)
+                                     (list #\. #\a #\a))) (make-pos 0 2))
+(check-expect (first-empty-pos (list (list #\a #\a #\a)
+                                     (list #\a #\. #\a)
+                                     (list #\a #\a #\a))) (make-pos 1 1))
+(check-expect (first-empty-pos (list (list #\a #\a #\a)
+                                     (list #\a #\a #\a)
+                                     (list #\. #\. #\a))) (make-pos 0 2))
+(check-expect (first-empty-pos (list (list #\. #\. #\.)
+                                     (list #\a #\a #\a)
+                                     (list #\. #\a #\a))) (make-pos 0 0))
+(check-expect (first-empty-pos (list (list #\a #\a #\a)
+                                     (list #\a #\a #\a)
+                                     (list #\a #\a #\.))) (make-pos 2 2))
+(check-expect (first-empty-pos (list (list #\a #\a #\a)
+                                     (list #\a #\a #\a)
+                                     (list #\a #\. #\a))) (make-pos 1 2))
+
+
+
+
+
+;;(4)
+
+;; (superimpose base top start-pos) produce the new grid that top is laid over
+;; base starting from start-pos and any #\. characters in top or shifted positions
+;; do not overwrite the contents of base
+;; superimpose: Grid Grid Pos -> Grid
+;; Examples:
+(check-expect (superimpose (list (list #\a #\a #\a)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\b))
+                           (make-pos 0 0))
+              (list (list #\b #\b #\a)
+                    (list #\a #\a #\a)))
+(check-expect (superimpose (list (list #\a #\a #\a)
+                                 (list #\a #\a #\a))
+                           (list (list #\b)
+                                 (list #\b))
+                           (make-pos 0 0))
+              (list (list #\b #\a #\a)
+                    (list #\b #\a #\a)))
+
+
+
+(define (superimpose base top start-pos)
+  (local
+    [;;(add-pos pos1) produces a new pos by adding start-pos with pos1
+     ;; add-pos: Pos -> Pos
+     (define (add-pos pos1)
+       (make-pos (+ (pos-x pos1) (pos-x start-pos))
+                 (+ (pos-y pos1) (pos-y start-pos))))
+     (define original-top-pos
+       (all-positions (length (first top)) (length top)))
+     (define new-top-pos
+       (map add-pos original-top-pos))
+     ;; (upgrade-grid base top lo-np lo-op) upgrade the base by replacing
+     ;; each element of base in lo-np pos with each non-#\. element of top
+     ;; in lo-op respectively
+     ;; upgrade-grid: Grid Grid (Listof Pos) (Listof Pos) -> Grid
+     ;; requires: lo-np and lo-op have same-length
+     (define (update-grid base top lo-np lo-op)
+       (cond [(empty? lo-op) base]
+             [(char=? #\. (locate top (first lo-op)))
+              (update-grid base top (rest lo-np) (rest lo-op))]
+             [else
+              (update-grid (replace base (first lo-np)
+                                    (locate top (first lo-op)))
+                           top (rest lo-np) (rest lo-op))]))]
+    (update-grid base top new-top-pos original-top-pos)))
+
+;; Tests: 
+(check-expect (superimpose (list (list #\a #\a #\a)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\b))
+                           (make-pos 0 0))
+              (list (list #\b #\b #\a)
+                    (list #\a #\a #\a)))
+(check-expect (superimpose (list (list #\a #\a #\a)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\b))
+                           (make-pos 1 0))
+              (list (list #\a #\b #\b)
+                    (list #\a #\a #\a)))
+(check-expect (superimpose (list (list #\a #\a #\a)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\b))
+                           (make-pos 2 0))
+              (list (list #\a #\a #\b)
+                    (list #\a #\a #\a)))
+(check-expect (superimpose (list (list #\a #\a #\a)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\b))
+                           (make-pos 3 0))
+              (list (list #\a #\a #\a)
+                    (list #\a #\a #\a)))
+(check-expect (superimpose (list (list #\a #\a #\a)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\b))
+                           (make-pos 0 1))
+              (list (list #\a #\a #\a)
+                    (list #\b #\b #\a)))
+(check-expect (superimpose (list (list #\a #\a #\a)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\b))
+                           (make-pos 1 1))
+              (list (list #\a #\a #\a)
+                    (list #\a #\b #\b)))
+(check-expect (superimpose (list (list #\a #\a #\a)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\b))
+                           (make-pos 2 1))
+              (list (list #\a #\a #\a)
+                    (list #\a #\a #\b)))
+(check-expect (superimpose (list (list #\a #\a #\a)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\b))
+                           (make-pos 3 1))
+              (list (list #\a #\a #\a)
+                    (list #\a #\a #\a)))
+(check-expect (superimpose (list (list #\a #\a #\a)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\b))
+                           (make-pos 2 2))
+              (list (list #\a #\a #\a)
+                    (list #\a #\a #\a)))
+(check-expect (superimpose (list (list #\a #\a #\.)
+                                 (list #\a #\a #\.)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\.)
+                                 (list #\b #\b))
+                           (make-pos 0 0))
+              (list (list #\b #\a #\.)
+                    (list #\b #\b #\.)
+                    (list #\a #\a #\a)))
+(check-expect (superimpose (list (list #\a #\a #\a)
+                                 (list #\a #\a #\a)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\.)
+                                 (list #\b #\b))
+                           (make-pos 1 0))
+              (list (list #\a #\b #\a)
+                    (list #\a #\b #\b)
+                    (list #\a #\a #\a)))
+(check-expect (superimpose (list (list #\a #\a #\.)
+                                 (list #\a #\a #\.)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\.)
+                                 (list #\b #\b))
+                           (make-pos 1 1))
+              (list (list #\a #\a #\.)
+                    (list #\a #\b #\.)
+                    (list #\a #\b #\b)))
+(check-expect (superimpose (list (list #\a #\a #\.)
+                                 (list #\a #\a #\.)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\.)
+                                 (list #\b #\b))
+                           (make-pos 2 1))
+              (list (list #\a #\a #\.)
+                    (list #\a #\a #\b)
+                    (list #\a #\a #\b)))
+(check-expect (superimpose (list (list #\a #\a #\.)
+                                 (list #\a #\a #\.)
+                                 (list #\a #\a #\a))
+                           (list (list #\b #\.)
+                                 (list #\b #\b))
+                           (make-pos 1 2))
+              (list (list #\a #\a #\.)
+                    (list #\a #\a #\.)
+                    (list #\a #\b #\a)))
+                          
+
+
+;;(5)
+
+;; (neighbouts-single base my-piece) produces the superimposed grid
+;; if my-piece can laid over base with first empty position of base
+;; covered and is not #\. otherwise produces empty
+;; neighbours-single: Grid Grid -> (Anyof Grid Empty)
+;; Exampeles:
+(check-expect (neighbours-single (list (list #\a #\a #\a)
+                                       (list #\a #\a #\.))
+                                 (list (list #\b #\b)))
+              empty)
+(check-expect (neighbours-single (list (list #\a #\. #\.)
+                                       (list #\a #\a #\a))
+                                 (list (list #\b #\b)))
+              (list (list #\a #\b #\b)
+                    (list #\a #\a #\a)))
+
+(define (neighbours-single base my-piece)
+  (local
+    [(define (find-first-non-empty loc) 
+       (cond [(empty? loc) 0]
+             [(not (char=? #\. (first loc))) 0]
+             [else (add1 (find-first-non-empty (rest loc)))]))
+     (define first-non-empty-my-piece (find-first-non-empty (first my-piece)))
+     (define first-empty-pos-base (first-empty-pos base))
+     (define difference (- (pos-x first-empty-pos-base)
+                           first-non-empty-my-piece))
+     (define start-pos (make-pos
+                        (cond [(>= difference 0) difference]
+                              [else 0])
+                        (pos-y first-empty-pos-base)))
+     ;;;;(add-pos pos1) produces a new pos by adding start-pos with pos1
+     ;; add-pos: Pos -> Pos
+     (define (add-pos pos1)
+       (make-pos (+ (pos-x pos1) (pos-x start-pos))
+                 (+ (pos-y pos1) (pos-y start-pos))))
+     (define old-pos
+       (all-positions (length (first my-piece)) (length my-piece)))
+     (define new-pos
+       (map add-pos old-pos))
+     ;;(valid-move? base my-piece new-pos old-pos) produces true
+     ;; if each element of base at each position of new-pos can be replaced
+     ;; by correpsonding element of my-piece at old-pos where either the element
+     ;; of base is #\. or the element of base is not #\. but that of my-piece is
+     ;; not #\.
+     ;; valid-move? Grid Grid (Listof Pos) (Listof Pos) -> Bool
+     (define (valid-move? base my-piece new-pos old-pos)
+       (cond [(empty? new-pos) true]
+             [(empty? (locate base (first new-pos))) false]
+             [(or (char=? #\. (locate base (first new-pos)))
+                  (and (not (char=? #\. (locate base (first new-pos))))
+                       (char=? #\. (locate my-piece (first old-pos)))))
+              (valid-move? base my-piece (rest new-pos) (rest old-pos))]
+             [else false]))]
+    (cond [(valid-move? base my-piece new-pos old-pos)
+           (superimpose base my-piece start-pos)]
+          [else empty])))
+
+;;tests:
+(check-expect (neighbours-single (list (list #\a #\a #\.)
+                                       (list #\a #\a #\.))
+                                 (list (list #\b #\b)))
+              empty)
+(check-expect (neighbours-single (list (list #\a #\. #\a)
+                                       (list #\a #\a #\a))
+                                 (list (list #\. #\b)
+                                       (list #\b #\b)))
+              empty)
+(check-expect (neighbours-single (list (list #\a #\a #\.)
+                                       (list #\a #\a #\.))
+                                 (list (list #\b)
+                                       (list #\b)))
+              (list (list #\a #\a #\b)
+                    (list #\a #\a #\b)))
+(check-expect (neighbours-single (list (list #\a #\a #\.)
+                                       (list #\a #\a #\a))
+                                 (list (list #\. #\b)))
+              (list (list #\a #\a #\b)
+                    (list #\a #\a #\a)))
+(check-expect (neighbours-single (list (list #\a #\. #\a)
+                                       (list #\a #\a #\a))
+                                 (list (list #\b #\.)))
+              (list (list #\a #\b #\a)
+                    (list #\a #\a #\a)))
+(check-expect (neighbours-single (list (list #\. #\. #\a)
+                                       (list #\. #\. #\a))
+                                 (list (list #\b #\.)
+                                       (list #\b #\b)))
+              (list (list #\b #\. #\a)
+                    (list #\b #\b #\a)))
+(check-expect (neighbours-single (list (list #\a #\a #\.)
+                                       (list #\a #\a #\a))
+                                 (list (list #\b)
+                                       (list #\.)))
+              (list (list #\a #\a #\b)
+                    (list #\a #\a #\a)))
+(check-expect (neighbours-single (list (list #\a #\a #\.)
+                                       (list #\a #\. #\.))
+                                 (list (list #\. #\b)
+                                       (list #\b #\b)))
+              (list (list #\a #\a #\b)
+                    (list #\a #\b #\b)))
+              
+              
+
+;; (neighbours my-state) produces a list of states in which one additional
+;;  polynomino has been placed in the puzzle of my-state and removed from the
+;; list of pieces from my-state yet to be placed
+;; neighbours: State -> (Listof State)
+(define (neighbours my-state) 
+  (local [(define base (state-puzzle my-state))
+          (define lop (state-pieces my-state))
+          ;; (my-flatten lst) produces flattened list of lst
+          ;; my-flatten: (Listof (Listof Any)) -> (Listof Any)
+          (define (my-flatten lst)
+            (foldr append empty lst))]
+    (my-flatten
+     (build-list
+      (length lop)
+      (lambda (x)
+        (local
+          [(define results
+             (map (lambda (y) (make-state y (remove-nth-element x lop)))
+                  (foldr
+                   (lambda (a b) (append (list (neighbours-single base a)) b))
+                   empty (all-orientations (find-nth-element x lop)))))]
+          (filter (lambda (z) (not (empty? (state-puzzle z)))) results)))))))
+
+
+
+(solve-puzzle pent-grid-5 pent-pieces-5 'interactive) 
+
+
+
+
+
+
+
